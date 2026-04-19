@@ -1,0 +1,150 @@
+name: RDP Hyper Optimized BR 3.0
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-turbinado:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:    
+      - name: 🚪 Liberar RDP e desativar NLA (sem frescura)
+        run: |    
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                           -Name "fDenyTSConnections" -Value 0 -Force    
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "UserAuthentication" -Value 0 -Force    
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "SecurityLayer" -Value 0 -Force    
+          netsh advfirewall firewall add rule name="RDP-Allow" dir=in action=allow protocol=TCP localport=3389    
+          Restart-Service -Name TermService -Force    
+
+      - name: 👤 Criar usuário RDP (ADMINISTRADOR raiz)
+        run: |    
+          $username = "RDP"    
+          $password = "882188Adr"    
+          net user $username $password /add    
+          net localgroup administrators $username /add          # ✅ ADMIN de volta!
+          net localgroup "Remote Desktop Users" $username /add    
+
+          # Autologin pra já cair na área de trabalho
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" `
+            -Name "AutoAdminLogon" -Value "1" -Type String    
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" `
+            -Name "DefaultUserName" -Value $username -Type String    
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" `
+            -Name "DefaultPassword" -Value $password -Type String    
+
+      - name: 🌎 Configurar Windows 100% Brasil (PT-BR, fuso, teclado)
+        run: |    
+          Set-WinSystemLocale -SystemLocale pt-BR    
+          Set-WinUserLanguageList -LanguageList pt-BR -Force    
+          Set-WinUILanguageOverride -Language pt-BR    
+          Set-WinCultureFromLanguageListOptOut -OptOut 0    
+          Set-TimeZone -Id "E. South America Standard Time"    
+
+          # Forçar teclado ABNT2
+          $LangList = New-WinUserLanguageList pt-BR    
+          $LangList[0].InputMethodTips.Clear()
+          $LangList[0].InputMethodTips.Add("0416:00010416")    
+          Set-WinUserLanguageList $LangList -Force
+
+          Set-Culture pt-BR
+          Set-WinHomeLocation -GeoId 32
+
+      - name: 🎨 Baixar e setar wallpaper bonitão
+        run: |
+          $wallpaperUrl = "https://images.pexels.com/photos/2868226/pexels-photo-2868226.jpeg?auto=compress&cs=tinysrgb&w=1920"
+          $wallpaperPath = "$env:USERPROFILE\Pictures\wallpaper.jpg"
+          
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Pictures" | Out-Null
+          Invoke-WebRequest -Uri $wallpaperUrl -OutFile $wallpaperPath
+          
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name WallPaper -Value $wallpaperPath
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name WallpaperStyle -Value "10"
+          
+          Start-Process rundll32.exe -ArgumentList "user32.dll,UpdatePerUserSystemParameters" -Wait
+
+      - name: ⚡ Otimização extrema do Windows (anti-desligamento incluso)
+        run: |    
+          # Desativar efeitos visuais
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" /v VisualFXSetting /t REG_DWORD /d 2 /f    
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" -Name "UserPreferencesMask" -Value ([byte[]](0x90,0x12,0x03,0x80))    
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" -Name "MenuShowDelay" -Value "0"    
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" -Name "WaitToKillAppTimeout" -Value "2000"    
+          Set-ItemProperty "HKCU:\Control Panel\Desktop" -Name "HungAppTimeout" -Value "1000"    
+
+          # Serviços inúteis
+          $services = "DiagTrack","WSearch","Spooler","SysMain","WaaSMedicSvc","DoSvc"    
+          foreach ($s in $services) {    
+              Stop-Service -Name $s -ErrorAction SilentlyContinue    
+              Set-Service -Name $s -StartupType Disabled -ErrorAction SilentlyContinue    
+          }    
+
+          # Desativar transparências e notificações
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v EnableTransparency /t REG_DWORD /d 0 /f    
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" /v ColorPrevalence /t REG_DWORD /d 0 /f
+          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\PushNotifications" /v ToastEnabled /t REG_DWORD /d 0 /f
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Windows Search" /v AllowCortana /t REG_DWORD /d 0 /f
+
+          # 🛑 EVITAR QUE A VM DURMA/DESLIGUE SOZINHA 🛑
+          powercfg -change -standby-timeout-ac 0
+          powercfg -change -standby-timeout-dc 0
+          powercfg -change -hibernate-timeout-ac 0
+          powercfg -change -hibernate-timeout-dc 0
+          powercfg -change -monitor-timeout-ac 0
+          powercfg -change -monitor-timeout-dc 0
+          powercfg -change -disk-timeout-ac 0
+          powercfg -change -disk-timeout-dc 0
+
+          # Desativar bloqueio de tela automático
+          reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Personalization" /v NoLockScreen /t REG_DWORD /d 1 /f
+          reg add "HKCU\Control Panel\Desktop" /v ScreenSaveActive /t REG_SZ /d 0 /f
+
+          # Performance de rede
+          netsh int tcp set global autotuninglevel=normal
+          netsh int tcp set global chimney=disabled
+          netsh int tcp set global rss=enabled
+
+      - name: 🔒 Instalar Tailscale
+        run: |    
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"    
+          $installerPath = "$env:TEMP\tailscale.msi"    
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath    
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait    
+          Remove-Item $installerPath -Force    
+
+      - name: 🌐 Conectar na rede Tailscale
+        run: |    
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID    
+          $tsIP = $null    
+          for ($i=0; $i -lt 10; $i++) {    
+            $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4    
+            if ($tsIP) { break }    
+            Start-Sleep -Seconds 5    
+          }    
+          if (-not $tsIP) { throw "Sem IP do Tailscale, deu ruim!" }    
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV    
+
+      - name: 📢 Mostrar dados de acesso e MANTER VIVA
+        run: |    
+          Write-Host "`n=== 🖥️ ACESSO REMOTO LIBERADO ===" -ForegroundColor Cyan
+          Write-Host "🔗 Endereço Tailscale: $env:TAILSCALE_IP" -ForegroundColor Yellow
+          Write-Host "👤 Usuário: RDP" -ForegroundColor Yellow
+          Write-Host "🔑 Senha: 882188Adr" -ForegroundColor Yellow
+          Write-Host "🌎 Região: Brasil (PT-BR)" -ForegroundColor Green
+          Write-Host "⏰ Fuso: Brasília (GMT-3)" -ForegroundColor Green
+          Write-Host "⌨️ Teclado: ABNT2" -ForegroundColor Green
+          Write-Host "🎨 Wallpaper: já tá bonitão!" -ForegroundColor Green
+          Write-Host "⚡ Windows otimizado e sem suspensão" -ForegroundColor Green
+          Write-Host "🔒 VPN Tailscale: conectada" -ForegroundColor Green
+          Write-Host "===============================`n" -ForegroundColor Cyan
+          
+          # Script para manter a VM acordada (envia um F13 a cada 4 minutos)
+          $WShell = New-Object -ComObject WScript.Shell
+          while ($true) {
+            # Envia tecla inofensiva para evitar screensaver/desconexão
+            $WShell.SendKeys('+{F13}')
+            Start-Sleep -Seconds 240
+          }
